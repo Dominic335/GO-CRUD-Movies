@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -66,43 +68,115 @@ func DeleteMovie(db *sql.DB, movieTitle string) error {
 	return nil
 }
 
-func main() {
+func promptForUpdate(prompt string, currentValue string) string {
+	fmt.Printf("%s [%s]: ", prompt, currentValue)
+	var input string
+	fmt.Scanln(&input)
+	if input == "" {
+		return currentValue
+	}
+	return input
+}
 
-	// Open the database connection
-	db, err := sql.Open("sqlite3", "movies.db")
+func EditMovie(db *sql.DB) {
+	fmt.Println("Enter the title of the movie you want to edit:")
+	var searchTitle string
+	fmt.Scanln(&searchTitle)
+
+	// First, find the movie by title to get its current details
+	movie, err := FindMovieByTitle(db, searchTitle)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("No movie found with the given title.")
+		} else {
+			log.Fatal("Error querying movie:", err)
+		}
+		return
+	}
+
+	// Prompt for new values, allowing Enter to keep existing values
+	newTitle := promptForUpdate("New title (press Enter to keep current)", movie.Title)
+	newDirector := promptForUpdate("New director (press Enter to keep current)", movie.Director)
+	newGenre := promptForUpdate("New genre (press Enter to keep current)", movie.Genre)
+	fmt.Println("Enter new release year (press Enter to keep current):")
+	var newReleaseYearStr string
+	fmt.Scanln(&newReleaseYearStr)
+	newReleaseYear := movie.ReleaseYear // Initialize with current year in case of no input
+	if newReleaseYearStr != "" {
+		newReleaseYear, err = strconv.Atoi(newReleaseYearStr)
+		if err != nil {
+			fmt.Println("Invalid input for release year. Keeping the current value.")
+		}
+	}
+
+	// Update the movie in the database
+	if err := UpdateMovie(db, movie.ID, newTitle, newReleaseYear, newDirector, newGenre); err != nil {
+		log.Fatal("Error updating movie:", err)
+	}
+	fmt.Println("Movie updated successfully.")
+}
+
+func FindMovieByTitle(db *sql.DB, title string) (Movie, error) {
+	var movie Movie
+	query := `SELECT id, title, release_year, director, genre FROM movies WHERE LOWER(title) = LOWER(?)`
+	err := db.QueryRow(query, title).Scan(&movie.ID, &movie.Title, &movie.ReleaseYear, &movie.Director, &movie.Genre)
+	if err != nil {
+		return Movie{}, err
+	}
+	return movie, nil
+}
+
+func UpdateMovie(db *sql.DB, id int, title string, releaseYear int, director string, genre string) error {
+	query := `UPDATE movies SET title = ?, release_year = ?, director = ?, genre = ? WHERE id = ?`
+	_, err := db.Exec(query, title, releaseYear, director, genre, id)
+	return err
+}
+
+func main() {
+	db, err := sql.Open("sqlite3", "./movies.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	fmt.Println("Do you want to add, delete, or edit a movie? (add/delete/edit)")
-	var choice string
-	fmt.Scanln(&choice)
+	for {
+		fmt.Println("Do you want to add, delete, edit a movie, or exit? (add/delete/edit/exit)")
+		var choice string
+		fmt.Scanln(&choice)
 
-	switch choice {
-	case "add":
-		Title, ReleaseYear, Director, Genre := getUserInput()
-		newMovie := Movie{
-			Title:       Title,
-			ReleaseYear: int(ReleaseYear),
-			Director:    Director,
-			Genre:       Genre,
+		// Convert the choice to lowercase to make the command case-insensitive
+		choice = strings.ToLower(choice)
+
+		switch choice {
+		case "add":
+			Title, ReleaseYear, Director, Genre := getUserInput()
+			newMovie := Movie{
+				Title:       Title,
+				ReleaseYear: int(ReleaseYear),
+				Director:    Director,
+				Genre:       Genre,
+			}
+			if err := AddMovie(db, newMovie); err != nil {
+				log.Fatalf("AddMovie() error: %v", err)
+			}
+		case "delete":
+			fmt.Println("Enter the title of the movie you want to delete:")
+			var titleToDelete string
+			fmt.Scanln(&titleToDelete)
+			if err := DeleteMovie(db, titleToDelete); err != nil {
+				log.Fatalf("DeleteMovie() error: %v", err)
+			}
+		case "edit":
+			EditMovie(db)
+			fmt.Println("Update successfull.")
+		case "exit":
+			fmt.Println("Exiting application...")
+			return
+		default:
+			fmt.Println("Invalid choice. Please type add, delete, edit, or exit.")
 		}
-		if err := AddMovie(db, newMovie); err != nil {
-			log.Fatalf("AddMovie() error: %v", err)
-		}
-	case "delete":
-		fmt.Println("Enter the title of the movie you want to delete:")
-		var titleToDelete string
-		fmt.Scanln(&titleToDelete)
-		if err := DeleteMovie(db, titleToDelete); err != nil {
-			log.Fatalf("DeleteMovie() error: %v", err)
-		}
-	case "edit":
-		// Placeholder for edit functionality
-		fmt.Println("Edit functionality not implemented yet.")
-	default:
-		fmt.Println("Invalid choice.")
+
+		fmt.Println() // Print an empty line for better readability between operations
 	}
 }
 
